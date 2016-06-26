@@ -1,0 +1,234 @@
+11:42	dave_uy	Whenever you have a chance, I could use some more help figuring out how the modifier works in my case. I don't need to do this, but I feel like it would help my understanding to complete the modifier.
+11:43	Iceland_jack	I want to stress that modifiers are a somewhat heavy-handed solution
+11:44	Iceland_jack	dave_uy: Let's say we want to only test MyList's shorter than 5
+11:44	Iceland_jack	    prop_test list =
+11:44	Iceland_jack	      length list < 5 ==> list == list
+11:44	Iceland_jack	
+11:44	Iceland_jack	We don't have to create a new type, we don't have to define a new Arbitrary instance
+11:44	dave_uy	OK. But suppose I wanted to have MyList with completely random data and a MyList with data that was only "Valid" data. Is that not a good use of Modifiers?
+11:45	Iceland_jack	It *may* be, but then your "valid data" would have to be static
+11:45	Iceland_jack	or at least hardcoded into your Arbitrary instance
+11:45	Iceland_jack	    elements :: [a] -> Gen a
+11:46	dave_uy	Like if I wanted MyList to only have positive Ints for the valid type.
+11:46	Iceland_jack	This lets you write
+11:46	Iceland_jack	    validNames :: Gen String
+11:46	Iceland_jack	    validNames = elements ["Alice", "Bob"]
+11:46	Iceland_jack	ah, that's even simpler to solve :)
+11:46	Iceland_jack	    test_foo (map abs -> xs) = ...
+11:47	Iceland_jack	QuickCheck may generate "[-1,4,-2]" but mapping abs gives you only positive [1,4,2]
+11:48	Iceland_jack	So there's many ways to skin a cat so to speak
+11:48	Iceland_jack	But should I show you how to create a modifier that generates only positive values?
+11:50	dave_uy	With MyList, that would really be helpful. I have been looking at the modifiers in Hackage but I still don't understand how to apply the patterns to MyList.
+11:50	Iceland_jack	It's only 3 lines to do it for regular lists :)
+11:50	Iceland_jack	    newtype PosList a = PL [a] deriving Show
+11:51	Iceland_jack	Just a wrapper around a list, simple
+11:51	Iceland_jack	    instance (Arbitrary a, Num a) => Arbitrary (PosList a) where
+11:51	Iceland_jack	      arbitrary = fmap (PL . map abs) arbitrary
+11:51	Iceland_jack	That's all you need
+11:52	Iceland_jack	You have a modifier for lists of positive numbers
+11:52	Iceland_jack	How do we use it?
+11:52	Iceland_jack	    prop_pos (PL xs) = all (>= 0) xs
+11:52	Iceland_jack	This checks that the list really contains positive numbers
+11:52	Iceland_jack	    >>> quickCheck prop_pos
+11:52	Iceland_jack	    +++ OK, passed 100 tests.
+11:53	Iceland_jack	and if run
+11:53	Iceland_jack	    >>> verboseCheck prop_pos
+11:53	Iceland_jack	    ...
+11:53	Iceland_jack	    Passed:
+11:53	Iceland_jack	    PL [17,22,20,20,20,1,0,2,11,19,8,9,0,3,6,12,12,13,14,18,2]
+11:53	Iceland_jack	    ...
+11:53	Iceland_jack	you'll see that it only generates lists of positive numbers
+11:54	dave_uy	I'm using QuickCheck through hspec, using Stack. Can you give me a second to try QuickCheck the way you are using it?
+11:54	Iceland_jack	Sure thing
+11:55	Iceland_jack	By the way, if you want to "sample" your generator... use sample
+11:55	Iceland_jack	    >>> sample (arbitrary :: Gen (PosList Int))
+11:55	Iceland_jack	    PL []
+11:55	Iceland_jack	    PL []
+11:55	Iceland_jack	    PL [4,3]
+11:55	Iceland_jack	    PL [3,6,3,0,3]
+11:55	Iceland_jack	    ...
+11:58	dave_uy	I'm putting these functions into my Lib.hs and then trying it out in stack repl. FYI
+11:58	Iceland_jack	All the '>>>' things I've written should work if you import Test.QuickCheck
+11:59	dave_uy	OK. I do need to import Test.QuickCheck
+12:00	dave_uy	quickCheck not in scope for some reason.
+12:01	Iceland_jack	Try importing Test.QuickCheck.Test
+12:01	Iceland_jack	It should be exported though
+12:01	Iceland_jack	(remember the capital 'C')
+12:03	dave_uy	Still not in scope for me. I'm looking up quickCheck in Hoogle.
+12:04	Iceland_jack	That's odd
+12:05	dave_uy	This is what I have and I'm doing a `stack repl` and then typing quickCheck https://gist.github.com/125cdc0826d05bf25a459df75372b764
+12:07	Iceland_jack	I'm not super familiar with stack, what happens if you important Test.QuickCheck again in the repl?
+12:08	Iceland_jack	and try
+12:08	Iceland_jack	    >>> :t quickCheck
+12:08	dave_uy	Yeah. That did it. I guess the repl doesn't automatically import from the source files.
+12:10	Iceland_jack	dave_uy: as a quick test, try
+12:10	Iceland_jack	    >>> quickCheck (\n -> sum [n] == n)
+12:11	Iceland_jack	and then
+12:11	Iceland_jack	    >>> verboseCheck (\n -> sum [n] == n)
+12:12	dave_uy	Yeah. Those work.
+12:13	Iceland_jack	There is a tension between "filtering" and "generating"
+12:14	dave_uy	What does that mean? I have to decide between generating the values or generating and filtering the values I want?
+12:14	Iceland_jack	Filtering will "waste" time to generate lists of any number
+12:14	Iceland_jack	    [1,-2,3,-4,5]
+12:14	Iceland_jack	and then waste time again to filter only the positives
+12:14	Iceland_jack	    >>> filter (>= 0) [1,-2,3,-4,5]
+12:14	Iceland_jack	    [1,3,5]
+12:14	Iceland_jack	or "converting" them to a format you want
+12:14	Iceland_jack	    >>> map abs [1,-2,3,-4,5]
+12:14	Iceland_jack	    [1,2,3,4,5]
+12:14	Iceland_jack	
+12:15	Iceland_jack	Same with
+12:15	Iceland_jack	    suchThat arbitrary (>= 0)
+12:16	dave_uy	I was thinking about that, but I didn't know how to generate both the random set and the valid set and use the generator I wanted in hspec.
+12:16	Iceland_jack	It really depends on what the valid set looks like (how big it is, where you get it from, ...) and how you want them to mix
+12:16	dave_uy	I would prefer to have two generators I think, if I could figure out how to use them both in hspec.
+12:17	Iceland_jack	What I mentioned earlier is one way
+12:17	Iceland_jack	<Iceland_jack>     validNames :: Gen String
+12:17	Iceland_jack	<Iceland_jack>     validNames = elements ["Alice", "Bob"]
+12:17	Iceland_jack	
+12:17	Iceland_jack	Could you give me a simple example of what you have in mind
+12:17	Iceland_jack	Would prime numbers fit your use?
+12:17	dave_uy	This is what I was trying to do:
+12:18	dave_uy	https://gist.github.com/104a83b6245dac3887b9ed8709dfb616
+12:19	Iceland_jack	I haven't used HSpec but I believe you don't need the (`shouldBe` True)
+12:19	Iceland_jack	describe "read" $ do
+12:19	Iceland_jack	  it "is inverse to show" $ property $
+12:19	Iceland_jack	    \x -> (read . show) x == (x :: Int)
+12:20	Iceland_jack	but anyway, if you define an Arbitrary instance for ValidMyList you should be done
+12:21	dave_uy	I haven't gotten anything to compile for my arbitrary instance.
+12:21	Iceland_jack	hm
+12:21	Iceland_jack	Did the 'PosList' instance work?
+12:21	dave_uy	Yes
+12:21	Iceland_jack	Did this instance work
+12:21	Iceland_jack	instance (Arbitrary a, Arbitrary m) => Arbitrary (ValidMyList m a) where
+12:21	Iceland_jack	  arbitrary = ValidMyList <$> arbitrary `suchThat` isValid
+12:23	Iceland_jack	Example output
+12:23	Iceland_jack	λ> sample (arbitrary @(ValidMyList Int Int))
+12:23	Iceland_jack	ValidMyList Empty
+12:23	Iceland_jack	ValidMyList (List (-2) 0 Empty)
+12:23	Iceland_jack	ValidMyList (List (-3) 1 Empty)
+12:23	Iceland_jack	ValidMyList (List 0 (-5) (List 5 1 (List 0 5 (List 0 (-3) (List 0 3 Empty)))))
+12:23	Iceland_jack	(don't mind the @)
+12:23	dave_uy	Just a second. I'm trying.
+12:25	dave_uy	Obviously, you have it working, but I'm still getting compile errors with my newtype.
+12:26	dave_uy	just a second
+12:35	dave_uy	I having the trouble now where m needs to be strictly and Int for isValid. https://gist.github.com/2634b3c5a2a77f83046ef74f4fcee698
+12:35	dave_uy	How did you get around that?
+12:36	Iceland_jack	You'll need to show me the code too, but you probably write
+12:36	Iceland_jack	    instance (Arbitrary a, Int ~ m) => Arbitrary (ValidMyList m a) where
+12:37	Iceland_jack	or
+12:37	Iceland_jack	    instance Arbitrary a => Arbitrary (ValidMyList Int a) where
+12:37	Iceland_jack	which does the same but gives you worse inference
+12:37	dave_uy	I think I tried the later. I'll try again.
+12:42	dave_uy	I've never seen the first syntax before. Here is my code and error: https://gist.github.com/a7fedc5a974280cc63cf1681114920aa
+12:42	Iceland_jack	Ah, right you have to enable an extension
+12:43	Iceland_jack	You enable FlexibleInstances by placing {-# LANGUAGE FlexibleInstances #-} at the top of your source file or by entering the following into GHCi:
+12:43	Iceland_jack	    ghci> :set -XFlexibleInstances
+12:44	Iceland_jack	I doubt you actually need that though
+12:44	Iceland_jack	If you actually need a number, add a 'Num' constraint
+12:45	Iceland_jack	Your example is complicated for a starting example
+12:51	dave_uy	Iceland_jack: I figured it was complicated when I couldn't figure it out right away.
+12:52	Iceland_jack	There is no reason I see to force an Int constraint
+12:53	dave_uy	I didn't get any samples from sample (arbitrary @(ValidMyList Int Int))
+12:54	Iceland_jack	@ is a recent feature
+12:54	Iceland_jack	try 'sample (arbitrary :: Gen (ValidMyList Int Float))'
+12:56	dave_uy	Cool. That is working.
+12:57	dave_uy	`suchThat` is doing the extra work to generate and filter, correct?
+12:58	Iceland_jack	yeah
+12:59	Iceland_jack	There is a lot going on, two type parameters and a lot of polymorphism
+13:00	Iceland_jack	dave_uy: I want to share a quick example with you
+13:00	Iceland_jack	Let say you need to test with random prime numbers
+13:00	Iceland_jack	    primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101]
+13:01	Iceland_jack	Let's write a modifier that generates primes
+13:01	dave_uy	If you want any compensation for your time, just ask. This has really been helpful. I still am missing something for the Modifier to work on hspec though. I'm getting ValidMyList not in scope even though I have imported it.
+13:01	dave_uy	OK
+13:02	Iceland_jack	    newtype Prime = Prime Integer deriving Show
+13:02	Iceland_jack	and Arbitrary instance
+13:02	Iceland_jack	    instance Arbitrary Prime where
+13:02	Iceland_jack	      arbitrary = Prime <$> elements primes
+13:02	Iceland_jack	that's it
+13:03	dave_uy	Wow, that's short.
+13:03	Iceland_jack	Now you can test
+13:03	Iceland_jack	    prop_foo (Prime p1) (Prime p2) = ...
+13:03	Iceland_jack	and p1, p2 will always be one of [2, 3, 5, 7, 11, 13, 17, ...
+13:03	Iceland_jack	Yeah :) that's why I'm a fan of terse examples
+13:03	Iceland_jack	Absolutely no need to compensate for my time, my pleasure
+13:04	Iceland_jack	Just promise never to give up Haskell for the rest of your life
+13:04	Iceland_jack	:þ
+13:04	dave_uy	I promise. I just hope Haskell doesn't kill me.
+13:05	Iceland_jack	It won't :) see how nice and short the "Prime" example was?
+13:05	dave_uy	I have been trying to better learn Haskell for awhile now. I have a project I want to build with Haskell, so I have been putting in extra effort lately.
+13:06	Iceland_jack	Also if you don't feel like creating a modifier, use 'forAll'
+13:06	Iceland_jack	    prop_foo =
+13:06	Iceland_jack	      forAll (elements primes) $ \p1 ->
+13:06	Iceland_jack	      forAll (elements primes) $ \p2 ->
+13:06	Iceland_jack	        ...
+13:06	Iceland_jack	It doesn't look as nice
+13:07	Iceland_jack	dave_uy: I wrote the documentation for QuickCheck some time ago, I guess I should add a section about modifiers but you may be interested in this:
+13:07	Iceland_jack	    https://hackage.haskell.org/package/QuickCheck-2.8.2/docs/Test-QuickCheck-Monadic.html
+13:07	Iceland_jack	It shows how you can QuickCheck IO actions etc.
+13:09	dave_uy	I'm missing the "primes" variable for some reason.
+13:09	Iceland_jack	I defined it myself
+13:09	Iceland_jack	    primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101]
+13:09	Iceland_jack	
+13:09	dave_uy	OK. I see.
+13:09	Iceland_jack	Just copied from Wikipedia
+13:10	Iceland_jack	It could alos be a list of emails, account numbers, ...
+13:10	Iceland_jack	*also
+13:20	Iceland_jack	So let's say you have
+13:20	Iceland_jack	    newtype Email = Email String
+13:20	Iceland_jack	that generates bogus emails
+13:20	Iceland_jack	    instance Arbitrary Email where
+13:20	Iceland_jack	      arbitrary = do
+13:20	Iceland_jack	        first  <- elements ["alice", "bob"]
+13:20	Iceland_jack	        second <- elements ["gmail", "aol", "hotmail"]
+13:20	Iceland_jack	        third  <- elements ["com", "is", "co.uk"]
+13:20	Iceland_jack	        pure (Email (first ++ "@" ++ second ++ "." ++ third)
+13:20	Iceland_jack	But if you have an existing database of valid emails, you can use "forAll" or a modifier to use that actual data
+13:22	dave_uy	Nice. I'm not familiar with "pure" but I think I'm following.
+13:22	Iceland_jack	ah sorry
+13:22	Iceland_jack	pure is same as return
+13:22	Iceland_jack	exactly the same, just more general (historical reasons)
+13:23	dave_uy	In my hspec example, I'm having trouble with using the modifier. I thought I had used "Positive" before but maybe not.
+13:23	dave_uy	Let me send you my code and error.
+13:24	Iceland_jack	λ> sample (arbitrary :: Gen Email)
+13:24	Iceland_jack	Email "alice@hotmail.is"
+13:24	Iceland_jack	Email "alice@aol.co.uk"
+13:24	Iceland_jack	Email "bob@hotmail.is"
+13:24	Iceland_jack	Email "alice@hotmail.co.uk"
+13:24	Iceland_jack	Email "alice@gmail.co.uk"
+13:24	Iceland_jack	Email "bob@gmail.is"
+13:24	dave_uy	I like that!
+13:24	Iceland_jack	Heading out
+13:24	Iceland_jack	I'll respond
+13:24	dave_uy	No problem. I need to take a break soon.
+13:36	dave_uy	Here is the error I'm getting from `stack test`. https://gist.github.com/anonymous/a31b7c5584177163da9bff9ea2a6538e  Am I not applying the modifier correctly in the test?
+13:40	Iceland_jack	dave_uy: You haven't imported the ValidMyList constructor
+13:41	Iceland_jack	When you have importing problems, try importing the entire library
+13:41	Iceland_jack	    import Lib
+13:41	Iceland_jack	and see if that works
+13:41	Iceland_jack	In this particular case, you can write
+13:41	Iceland_jack	    , ValidMyList (ValidMyList)
+13:41	Iceland_jack	or
+13:41	Iceland_jack	    , ValidMyList (..)
+13:41	Iceland_jack	
+13:42	dave_uy	You are right. I should have seen that :/
+13:43	Iceland_jack	Everyone has 1000 dumb mistakes in them
+13:43	dave_uy	Thank you so much! I'm going to study what we have done here. Now I'm wondering if I can use a two different generators for two different QuickCheck tests using the same data type.
+13:43	Iceland_jack	No problem
+13:44	dave_uy	I'm not counting, but I gotta be close to 1000 by now.
+13:44	Iceland_jack	if you want different behaviours you most likely want to use "forAll" or filtering
+13:44	Iceland_jack	    prop_foo xs =
+13:44	Iceland_jack	      let xs_pos = map abs xs
+13:44	Iceland_jack	       in ...
+13:46	Iceland_jack	But if you think you'll be using it often, it may be worth creating a newtype modifier
+13:47	dave_uy	OK. Thanks for the tip. Thank you also for your work on QuickCheck. I really enjoy using the library. Probably more so when I can use it better.
+13:48	Iceland_jack	QuickCheck is the king of bang-for-your-buck
+13:48	Iceland_jack	Here's a simple tip: If you refactor a function, save it as 'function_old' and create a test that checks they return the same thing
+13:48	Iceland_jack	    prop_function a b c = function a b c == function_old a b c
+13:49	Iceland_jack	As a lightweight sanity check that you haven't modified the behaviour
+13:49	dave_uy	Yeah, that is really great! I have been using it for similar thing going through cis194.
+13:49	Iceland_jack	Good luck :) as before feel free to PM
+14:09	dave_uy	Do you mind if I post this chat log on my Github account?
+14:09	Iceland_jack	no
+14:09	Iceland_jack	go ahead
